@@ -1,128 +1,297 @@
-"""
-academic_agent.py
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agente UAENF – Leitor de PDFs</title>
+  <style>
+    :root { --bg:#0b0d10; --card:#12161b; --ink:#f3f5f7; --muted:#a7b0ba; --accent:#5bd1ff; }
+    body { margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--ink); }
+    header { padding:24px; border-bottom:1px solid #20262d; display:flex; gap:16px; align-items:center; }
+    h1 { margin:0; font-size:20px; }
+    main { max-width:1100px; margin:0 auto; padding:24px; display:grid; gap:24px; }
+    .row { display:grid; gap:16px; grid-template-columns: 1fr; }
+    @media (min-width: 900px){ .row { grid-template-columns: 1fr 1fr; } }
+    .card { background:var(--card); border:1px solid #20262d; border-radius:16px; padding:18px; box-shadow: 0 10px 24px rgba(0,0,0,.25); }
+    .drop { border:1.5px dashed #2b3139; border-radius:16px; padding:24px; text-align:center; cursor:pointer; }
+    .drop.dragover { border-color: var(--accent); background: #0f1820; }
+    .muted { color:var(--muted); }
+    .btn { background:#1b232c; color:var(--ink); border:1px solid #2b3139; padding:10px 14px; border-radius:10px; cursor:pointer; }
+    .btn:hover { border-color: var(--accent); }
+    .grid { display:grid; gap:12px; }
+    .result { border:1px solid #28303a; border-radius:12px; padding:12px; background:#0f1318; }
+    .tag { display:inline-block; padding:2px 8px; border:1px solid #2b3139; border-radius:999px; font-size:12px; color:var(--muted); margin-right:8px; }
+    .small { font-size:12px; color:var(--muted); }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; background:#0d1217; border:1px solid #27303a; padding:2px 6px; border-radius:6px; color:#b9c3cd; }
+    details { background:#0f1419; border:1px solid #27303a; border-radius:10px; padding:10px 12px; }
+    summary { cursor:pointer; color:#dce3ea; }
+    textarea { width:100%; min-height:110px; background:#0f1318; color:var(--ink); border:1px solid #28303a; border-radius:10px; padding:10px; }
+  </style>
+  <!-- pdf.js CDN (core + worker) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script>
+    // Configura worker do pdf.js via CDN (evita erro de worker no GitHub Pages)
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Agente UAENF – Leitura & Ações de Documentos</h1>
+    <span class="tag">Front-end only</span>
+    <span class="tag">Privado (no browser)</span>
+  </header>
 
-This script acts as a simple agent for processing PDF documents from an academic
-unit.  It uses the `pdftotext` utility to extract text from PDF files and then
-searches for key action phrases that indicate what the document is asking for.
-The goal is to provide a concise summary of tasks or requests contained in
-institutional documents, such as research project submissions or administrative
-dispatches.
+  <main>
+    <section class="card">
+      <div class="grid">
+        <div class="row">
+          <div>
+            <div id="dropzone" class="drop">
+              <strong>Solte PDFs aqui</strong><br/>
+              <span class="muted">ou clique para selecionar</span><br/><br/>
+              <input id="fileInput" type="file" accept="application/pdf" multiple style="display:none" />
+              <button id="pickBtn" class="btn">Selecionar arquivos PDF</button>
+            </div>
+            <p class="small">
+              Dica: você pode arrastar e soltar arquivos do SEI diretamente aqui.<br/>
+              Tudo roda localmente. Nenhum arquivo sai do seu computador.
+            </p>
+          </div>
+          <div>
+            <div class="grid">
+              <button id="exportJson" class="btn">Exportar JSON</button>
+              <button id="exportCsv" class="btn">Exportar CSV</button>
+              <button id="clearState" class="btn">Limpar resultados salvos</button>
+              <details>
+                <summary>Palavras-chave (editar)</summary>
+                <p class="small">Separe por vírgulas. O agente procura frases que contenham estas chaves.</p>
+                <textarea id="keywordsBox">solicito, encaminhamento, certificação, arquivamento, diligência, parecer, CEP, comissão</textarea>
+                <button id="saveKw" class="btn" style="margin-top:8px;">Salvar palavras-chave</button>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="result">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>Resultados</strong>
+              <span class="small"><span class="kbd">arraste</span> PDFs para analisar</span>
+            </div>
+            <div id="results" class="grid" style="margin-top:10px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
-Usage:
-    python academic_agent.py <pdf1> <pdf2> ...
+    <section class="card">
+      <strong>Como funciona</strong>
+      <ol class="small">
+        <li>Carrega PDF no navegador e extrai texto com pdf.js (client-side).</li>
+        <li>Divide em sentenças e marca as que contêm palavras-chave configuráveis.</li>
+        <li>Gera um painel por documento com links para exportar CSV/JSON.</li>
+        <li>Salva no <code>localStorage</code> para você retomar depois.</li>
+      </ol>
+    </section>
+  </main>
 
-The script will process each PDF, extract the textual content, and print a
-summary of detected requests/actions.  It is intentionally simple and can
-serve as a starting point for more sophisticated automation.
+  <script>
+    // ---------- Utilidades ----------
+    const $ = sel => document.querySelector(sel);
+    const resultsEl = $("#results");
+    const stateKey = "agente-uaenf-state-v1";
+    const kwKey    = "agente-uaenf-kws-v1";
 
-Note:
-    This script relies on the `pdftotext` command-line tool, which should
-    already be available in the environment (as part of the poppler utils).  If
-    `pdftotext` is not installed, the script will notify the user.
-"""
+    function loadState(){
+      try { return JSON.parse(localStorage.getItem(stateKey) || "[]"); } catch { return []; }
+    }
+    function saveState(data){
+      localStorage.setItem(stateKey, JSON.stringify(data));
+    }
+    function loadKeywords(){
+      const def = "solicito, encaminhamento, certificação, arquivamento, diligência, parecer, CEP, comissão";
+      try {
+        return (localStorage.getItem(kwKey) || def)
+          .split(",").map(s => s.trim()).filter(Boolean);
+      } catch {
+        return def.split(",").map(s=>s.trim());
+      }
+    }
+    function saveKeywords(raw){
+      localStorage.setItem(kwKey, raw);
+    }
+    function sentences(text){
+      // quebra simples por sentenças (ponto, interrogação, quebra de linha)
+      return text
+        .replace(/\s+/g,' ')
+        .split(/(?<=[\.\!\?])\s+|\n+/g)
+        .map(s=>s.trim())
+        .filter(s=>s.length>0);
+    }
+    function escapeCsv(s){
+      if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+        return '"' + s.replace(/"/g,'""') + '"';
+      }
+      return s;
+    }
+    function download(filename, text){
+      const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
 
-import re
-import subprocess
-import sys
-from pathlib import Path
+    // ---------- PDF: extrair texto (pdf.js) ----------
+    async function extractPdfText(file){
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+      let fullText = "";
+      for (let p = 1; p <= pdf.numPages; p++){
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const strings = content.items.map(it => it.str);
+        fullText += strings.join(" ") + "\n";
+      }
+      return fullText;
+    }
 
+    // ---------- Processamento ----------
+    function analyzeText(docName, text, keywords){
+      const sents = sentences(text);
+      const hits = [];
+      const kwsLC = keywords.map(k=>k.toLowerCase());
+      sents.forEach((s, idx) => {
+        const sLC = s.toLowerCase();
+        const matched = kwsLC.filter(k => sLC.includes(k));
+        if (matched.length){
+          hits.push({
+            idx, sentence: s, matched: matched.slice(0, 3) // limita tags
+          });
+        }
+      });
+      return { docName, count: hits.length, hits };
+    }
 
-def extract_text_from_pdf(pdf_path: Path) -> str:
-    """Run pdftotext on the given PDF and return its textual content.
+    function renderResult(block){
+      const wrap = document.createElement('div');
+      wrap.className = 'result';
+      const title = document.createElement('div');
+      title.innerHTML = `<strong>${block.docName}</strong> <span class="small">(${block.count} ocorrência(s))</span>`;
+      wrap.appendChild(title);
 
-    Args:
-        pdf_path (Path): Path to the PDF file.
+      if (!block.hits.length){
+        const p = document.createElement('p');
+        p.className = 'muted';
+        p.textContent = 'Nenhuma sentença relevante encontrada.';
+        wrap.appendChild(p);
+      } else {
+        const list = document.createElement('div');
+        list.className = 'grid';
+        block.hits.forEach((h,i)=>{
+          const item = document.createElement('div');
+          item.style.border = '1px solid #28303a';
+          item.style.borderRadius = '10px';
+          item.style.padding = '10px';
+          const tags = h.matched.map(k=>`<span class="tag">${k}</span>`).join(' ');
+          item.innerHTML = `<div class="small" style="margin-bottom:6px;">#${i+1} ${tags}</div><div>${h.sentence}</div>`;
+          list.appendChild(item);
+        });
+        wrap.appendChild(list);
+      }
 
-    Returns:
-        str: Extracted text, or an empty string if extraction fails.
-    """
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"File not found: {pdf_path}")
-    try:
-        # call pdftotext to extract text to stdout (-)
-        result = subprocess.run(
-            ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf_path), "-"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout
-    except FileNotFoundError:
-        raise RuntimeError(
-            "pdftotext command not found. Please ensure poppler-utils is installed."
-        )
-    except subprocess.CalledProcessError as e:
-        # return whatever was captured in stdout even if pdftotext reports errors
-        return e.stdout or ""
+      const bar = document.createElement('div');
+      bar.style.display='flex'; bar.style.gap='8px'; bar.style.marginTop='10px';
+      const btnJ = document.createElement('button');
+      btnJ.className='btn'; btnJ.textContent='Baixar JSON';
+      btnJ.onclick = ()=> download(
+        block.docName.replace(/\\s+/g,'_') + '.json',
+        JSON.stringify(block, null, 2)
+      );
+      const btnC = document.createElement('button');
+      btnC.className='btn'; btnC.textContent='Baixar CSV';
+      btnC.onclick = ()=>{
+        const rows = [['doc','ordem','tags','sentenca']];
+        block.hits.forEach((h,i)=>{
+          rows.push([
+            block.docName,
+            String(i+1),
+            h.matched.join('|'),
+            h.sentence
+          ]);
+        });
+        const csv = rows.map(r=>r.map(escapeCsv).join(',')).join('\\n');
+        download(block.docName.replace(/\\s+/g,'_') + '.csv', csv);
+      };
+      bar.appendChild(btnJ); bar.appendChild(btnC);
+      wrap.appendChild(bar);
+      resultsEl.prepend(wrap);
+    }
 
+    // ---------- UI e Estado ----------
+    let appState = loadState();
+    function redraw(){
+      resultsEl.innerHTML = '';
+      appState.forEach(renderResult);
+    }
+    redraw();
 
-def find_action_phrases(text: str) -> list[tuple[str, str]]:
-    """Search for common action phrases in the document text.
+    const drop = $("#dropzone");
+    const input = $("#fileInput");
+    $("#pickBtn").onclick = ()=> input.click();
 
-    The function looks for sentences containing verbs such as "solicito",
-    "encaminhar", "arquivamento", etc., which often indicate requests or
-    instructions in academic administrative documents.  It returns a list of
-    tuples (keyword, sentence) for each detected phrase.
+    drop.addEventListener('dragover', (e)=>{ e.preventDefault(); drop.classList.add('dragover'); });
+    drop.addEventListener('dragleave', ()=> drop.classList.remove('dragover'));
+    drop.addEventListener('drop', async (e)=>{
+      e.preventDefault(); drop.classList.remove('dragover');
+      await handleFiles(e.dataTransfer.files);
+    });
+    drop.addEventListener('click', ()=> input.click());
+    input.addEventListener('change', async ()=> await handleFiles(input.files));
 
-    Args:
-        text (str): Full text extracted from a PDF.
+    async function handleFiles(fileList){
+      const keywords = ($("#keywordsBox")?.value || loadKeywords().join(", ")).split(',').map(s=>s.trim()).filter(Boolean);
+      for (const file of fileList){
+        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) continue;
+        const text = await extractPdfText(file);
+        const block = analyzeText(file.name, text, keywords);
+        appState.push(block);
+        saveState(appState);
+        renderResult(block);
+      }
+      input.value = '';
+    }
 
-    Returns:
-        list[tuple[str, str]]: A list of detected (keyword, sentence) pairs.
-    """
-    action_keywords = [
-        "solicito",  # I request
-        "encaminhamento",  # forwarding
-        "encaminhar",  # to forward
-        "arquivamento",  # archiving
-        "certificação",  # certification
-        "reencaminhado",  # re-forwarded
-        "reencaminhar",
-    ]
-    # Split text into sentences using simple punctuation heuristics
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    detected: list[tuple[str, str]] = []
-    for sent in sentences:
-        lowered = sent.lower()
-        for keyword in action_keywords:
-            if keyword in lowered:
-                # Clean and condense whitespace
-                cleaned = " ".join(sent.split())
-                detected.append((keyword, cleaned))
-                break
-    return detected
+    $("#exportJson").onclick = ()=>{
+      if (!appState.length) return;
+      download('agente_uaenf_export.json', JSON.stringify(appState, null, 2));
+    };
+    $("#exportCsv").onclick = ()=>{
+      if (!appState.length) return;
+      const rows = [['doc','ordem','tags','sentenca']];
+      appState.forEach(block=>{
+        block.hits.forEach((h,i)=>{
+          rows.push([block.docName, String(i+1), h.matched.join('|'), h.sentence]);
+        });
+      });
+      const csv = rows.map(r=>r.map(escapeCsv).join(',')).join('\\n');
+      download('agente_uaenf_export.csv', csv);
+    };
+    $("#clearState").onclick = ()=>{
+      if (!confirm('Apagar resultados salvos?')) return;
+      appState = [];
+      saveState(appState);
+      redraw();
+    };
 
-
-def summarize_pdf(pdf_path: Path) -> None:
-    """Extract and summarize action phrases from a single PDF file."""
-    print(f"\nProcessing file: {pdf_path.name}")
-    text = extract_text_from_pdf(pdf_path)
-    if not text.strip():
-        print("  [Warning] No text could be extracted from this document.")
-        return
-    actions = find_action_phrases(text)
-    if actions:
-        print(f"  Detected {len(actions)} action phrase(s):")
-        for idx, (keyword, sentence) in enumerate(actions, start=1):
-            print(f"    {idx}. ({keyword}) {sentence}")
-    else:
-        print("  No action phrases detected.")
-
-
-def main(args: list[str]) -> None:
-    if not args:
-        print("Usage: python academic_agent.py <pdf1> <pdf2> ...")
-        return
-    for arg in args:
-        pdf_path = Path(arg)
-        if pdf_path.suffix.lower() != ".pdf":
-            print(f"Skipping non-PDF file: {pdf_path}")
-            continue
-        try:
-            summarize_pdf(pdf_path)
-        except Exception as exc:
-            print(f"Error processing {pdf_path}: {exc}")
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])
+    // palavras-chave
+    const savedKW = loadKeywords().join(', ');
+    const box = $("#keywordsBox");
+    if (box) box.value = savedKW;
+    $("#saveKw").onclick = ()=>{
+      saveKeywords($("#keywordsBox").value);
+      alert('Palavras-chave salvas!');
+    };
+  </script>
+</body>
+</html>
