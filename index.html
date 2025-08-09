@@ -1,0 +1,128 @@
+"""
+academic_agent.py
+
+This script acts as a simple agent for processing PDF documents from an academic
+unit.  It uses the `pdftotext` utility to extract text from PDF files and then
+searches for key action phrases that indicate what the document is asking for.
+The goal is to provide a concise summary of tasks or requests contained in
+institutional documents, such as research project submissions or administrative
+dispatches.
+
+Usage:
+    python academic_agent.py <pdf1> <pdf2> ...
+
+The script will process each PDF, extract the textual content, and print a
+summary of detected requests/actions.  It is intentionally simple and can
+serve as a starting point for more sophisticated automation.
+
+Note:
+    This script relies on the `pdftotext` command-line tool, which should
+    already be available in the environment (as part of the poppler utils).  If
+    `pdftotext` is not installed, the script will notify the user.
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def extract_text_from_pdf(pdf_path: Path) -> str:
+    """Run pdftotext on the given PDF and return its textual content.
+
+    Args:
+        pdf_path (Path): Path to the PDF file.
+
+    Returns:
+        str: Extracted text, or an empty string if extraction fails.
+    """
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"File not found: {pdf_path}")
+    try:
+        # call pdftotext to extract text to stdout (-)
+        result = subprocess.run(
+            ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf_path), "-"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout
+    except FileNotFoundError:
+        raise RuntimeError(
+            "pdftotext command not found. Please ensure poppler-utils is installed."
+        )
+    except subprocess.CalledProcessError as e:
+        # return whatever was captured in stdout even if pdftotext reports errors
+        return e.stdout or ""
+
+
+def find_action_phrases(text: str) -> list[tuple[str, str]]:
+    """Search for common action phrases in the document text.
+
+    The function looks for sentences containing verbs such as "solicito",
+    "encaminhar", "arquivamento", etc., which often indicate requests or
+    instructions in academic administrative documents.  It returns a list of
+    tuples (keyword, sentence) for each detected phrase.
+
+    Args:
+        text (str): Full text extracted from a PDF.
+
+    Returns:
+        list[tuple[str, str]]: A list of detected (keyword, sentence) pairs.
+    """
+    action_keywords = [
+        "solicito",  # I request
+        "encaminhamento",  # forwarding
+        "encaminhar",  # to forward
+        "arquivamento",  # archiving
+        "certificação",  # certification
+        "reencaminhado",  # re-forwarded
+        "reencaminhar",
+    ]
+    # Split text into sentences using simple punctuation heuristics
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    detected: list[tuple[str, str]] = []
+    for sent in sentences:
+        lowered = sent.lower()
+        for keyword in action_keywords:
+            if keyword in lowered:
+                # Clean and condense whitespace
+                cleaned = " ".join(sent.split())
+                detected.append((keyword, cleaned))
+                break
+    return detected
+
+
+def summarize_pdf(pdf_path: Path) -> None:
+    """Extract and summarize action phrases from a single PDF file."""
+    print(f"\nProcessing file: {pdf_path.name}")
+    text = extract_text_from_pdf(pdf_path)
+    if not text.strip():
+        print("  [Warning] No text could be extracted from this document.")
+        return
+    actions = find_action_phrases(text)
+    if actions:
+        print(f"  Detected {len(actions)} action phrase(s):")
+        for idx, (keyword, sentence) in enumerate(actions, start=1):
+            print(f"    {idx}. ({keyword}) {sentence}")
+    else:
+        print("  No action phrases detected.")
+
+
+def main(args: list[str]) -> None:
+    if not args:
+        print("Usage: python academic_agent.py <pdf1> <pdf2> ...")
+        return
+    for arg in args:
+        pdf_path = Path(arg)
+        if pdf_path.suffix.lower() != ".pdf":
+            print(f"Skipping non-PDF file: {pdf_path}")
+            continue
+        try:
+            summarize_pdf(pdf_path)
+        except Exception as exc:
+            print(f"Error processing {pdf_path}: {exc}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
